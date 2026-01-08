@@ -1315,9 +1315,10 @@ async def generate_quotation_pdf(quotation_id: str):
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         )
         page = await browser.newPage()
-        await page.setViewport({"width": 1200, "height": 1600})
+        await page.setViewport({"width": 2480, "height": 3508})
         await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
         await asyncio.sleep(3)
+        await page.emulateMediaType("print")
 
         safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
         pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
@@ -1326,7 +1327,8 @@ async def generate_quotation_pdf(quotation_id: str):
             "path": pdf_path,
             "format": "A4",
             "printBackground": True,
-            "margin": {"top": "0mm", "right": "0mm", "bottom": "0mm", "left": "0mm"},
+            "preferCSSPageSize": True,
+            "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
         })
 
         await browser.close()
@@ -1368,14 +1370,11 @@ async def _generate_pdf_v2_impl(quotation_id: str):
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         )
         page = await browser.newPage()
-        await page.setViewport({"width": 1200, "height": 1600})
+        await page.setViewport({"width": 2480, "height": 3508})
         await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
         await asyncio.sleep(3)
 
-        try:
-            await page.emulateMediaType("screen")
-        except Exception:
-            pass
+        await page.emulateMediaType("print")
 
         safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
         pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
@@ -1384,7 +1383,8 @@ async def _generate_pdf_v2_impl(quotation_id: str):
             "path": pdf_path,
             "format": "A4",
             "printBackground": True,
-            "margin": {"top": "0mm", "right": "0mm", "bottom": "0mm", "left": "0mm"},
+            "preferCSSPageSize": True,
+            "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
         })
 
         await browser.close()
