@@ -73,6 +73,18 @@ const QuotationPreview = () => {
 
   const handleDownloadPDF = async () => {
     const toastId = toast.loading('PDF hazırlanıyor...');
+    const primaryUrl = `${API}/quotations/${id}/generate-pdf-v2`;
+    const fallbackUrl = `${API}/quotations/${id}/generate-pdf`;
+
+    try {
+      const response = await fetch(primaryUrl, { method: 'HEAD' });
+      const targetUrl = response.ok ? primaryUrl : fallbackUrl;
+      window.location.assign(targetUrl);
+      toast.success('PDF indiriliyor...', { id: toastId });
+    } catch (error) {
+      console.error('PDF export error:', error);
+      window.location.assign(fallbackUrl);
+      toast.success('PDF indiriliyor...', { id: toastId });
 
     try {
       let response;

@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 import shutil
 import asyncio
+from playwright.async_api import async_playwright
 
 from warehouse_routes import router as warehouse_router, init_warehouse_db
 from inventory_routes import router as inventory_router, set_database as set_inventory_db
@@ -1300,7 +1301,6 @@ async def search_quotations(q: str, quotation_type: str = None):
 # ============================================================================
 @api_router.get("/quotations/{quotation_id}/generate-pdf")
 async def generate_quotation_pdf(quotation_id: str):
-    browser = None
     try:
         quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
         if not quotation:
@@ -1309,6 +1309,29 @@ async def generate_quotation_pdf(quotation_id: str):
         frontend_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://localhost:3000")
         preview_url = f"{frontend_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+            page = await browser.newPage()
+            await page.setViewport({"width": 2480, "height": 3508})
+            await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
+            await asyncio.sleep(3)
+            await page.emulateMediaType("print")
+
+            safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+            pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
+
+            await page.pdf({
+                "path": pdf_path,
+                "format": "A4",
+                "printBackground": True,
+                "preferCSSPageSize": True,
+                "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+            })
+            await browser.close()
         browser = await launch(
             headless=True,
             executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
@@ -1346,16 +1369,10 @@ async def generate_quotation_pdf(quotation_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
 
 
 async def _generate_pdf_v2_impl(quotation_id: str):
-    browser = None
     try:
         quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
         if not quotation:
@@ -1364,6 +1381,30 @@ async def _generate_pdf_v2_impl(quotation_id: str):
         frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
         preview_url = f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+            page = await browser.newPage()
+            await page.setViewport({"width": 2480, "height": 3508})
+            await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
+            await asyncio.sleep(3)
+
+            await page.emulateMediaType("print")
+
+            safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+            pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
+
+            await page.pdf({
+                "path": pdf_path,
+                "format": "A4",
+                "printBackground": True,
+                "preferCSSPageSize": True,
+                "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+            })
+            await browser.close()
         browser = await launch(
             headless=True,
             executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
@@ -1402,11 +1443,6 @@ async def _generate_pdf_v2_impl(quotation_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass
         raise HTTPException(status_code=500, detail=f"PDF generation failed (v2): {e}")
 
 
