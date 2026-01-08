@@ -17,7 +17,7 @@ body {
 @media print {
   @page {
     size: A4;
-    margin: 0;
+    margin: 10mm;
   }
   
   body {
