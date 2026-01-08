@@ -1306,8 +1306,8 @@ async def generate_quotation_pdf(quotation_id: str):
         if not quotation:
             raise HTTPException(status_code=404, detail="Quotation not found")
 
-        frontend_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://localhost:3000")
-        preview_url = f"{frontend_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
+        frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
+        preview_url = f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(
