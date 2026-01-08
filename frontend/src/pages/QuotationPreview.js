@@ -85,6 +85,35 @@ const QuotationPreview = () => {
       console.error('PDF export error:', error);
       window.location.assign(fallbackUrl);
       toast.success('PDF indiriliyor...', { id: toastId });
+
+    try {
+      let response;
+      try {
+        response = await axios.get(`${API}/quotations/${id}/generate-pdf-v2`, {
+          responseType: 'blob'
+        });
+      } catch (error) {
+        response = await axios.get(`${API}/quotations/${id}/generate-pdf`, {
+          responseType: 'blob'
+        });
+      }
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute(
+        'download',
+        `Teklif-${quotation.quote_no}-${quotation.customer_name}.pdf`
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      toast.success('PDF başarıyla indirildi!', { id: toastId });
+    } catch (error) {
+      console.error('PDF export error:', error);
+      toast.error('PDF indirilemedi', { id: toastId });
     }
   };
 

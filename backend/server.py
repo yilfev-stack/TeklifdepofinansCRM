@@ -1332,6 +1332,30 @@ async def generate_quotation_pdf(quotation_id: str):
                 "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
             })
             await browser.close()
+        browser = await launch(
+            headless=True,
+            executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        page = await browser.newPage()
+        await page.setViewport({"width": 2480, "height": 3508})
+        await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
+        await asyncio.sleep(3)
+        await page.emulateMediaType("print")
+
+        safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
+
+        await page.pdf({
+            "path": pdf_path,
+            "format": "A4",
+            "printBackground": True,
+            "preferCSSPageSize": True,
+            "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+        })
+
+        await browser.close()
+        browser = None
 
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise Exception("PDF file not created or empty")
@@ -1381,6 +1405,31 @@ async def _generate_pdf_v2_impl(quotation_id: str):
                 "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
             })
             await browser.close()
+        browser = await launch(
+            headless=True,
+            executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        page = await browser.newPage()
+        await page.setViewport({"width": 2480, "height": 3508})
+        await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
+        await asyncio.sleep(3)
+
+        await page.emulateMediaType("print")
+
+        safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
+
+        await page.pdf({
+            "path": pdf_path,
+            "format": "A4",
+            "printBackground": True,
+            "preferCSSPageSize": True,
+            "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+        })
+
+        await browser.close()
+        browser = None
 
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise Exception("PDF file not created or empty")
