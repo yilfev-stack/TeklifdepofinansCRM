@@ -10,6 +10,11 @@ import uuid
 from pathlib import Path
 import shutil
 import asyncio
+from playwright.async_api import async_playwright
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 from warehouse_routes import router as warehouse_router, init_warehouse_db
 from inventory_routes import router as inventory_router, set_database as set_inventory_db
@@ -132,6 +137,108 @@ def calculate_totals_by_currency(line_items: List[dict]) -> dict:
         line_total = item.get("line_total", 0)
         totals[currency] = totals.get(currency, 0) + line_total
     return {"totals": totals}
+
+
+def format_currency(amount: float, currency: str) -> str:
+    try:
+        return f"{amount:,.2f} {currency}".replace(",", " ")
+    except Exception:
+        return f"{amount} {currency}"
+
+
+def build_native_quotation_pdf(quotation: dict, pdf_path: str) -> None:
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+        title=f"Teklif {quotation.get('quote_no', '')}",
+    )
+    styles = getSampleStyleSheet()
+    elements = []
+
+    title = quotation.get("subject") or "Teklif"
+    elements.append(Paragraph(f"<b>{title}</b>", styles["Title"]))
+    elements.append(Spacer(1, 12))
+
+    customer_name = quotation.get("customer_name") or "-"
+    quote_no = quotation.get("quote_no") or "-"
+    date_value = quotation.get("date")
+    if isinstance(date_value, datetime):
+        date_text = date_value.strftime("%d.%m.%Y")
+    else:
+        date_text = str(date_value) if date_value else "-"
+
+    meta_lines = [
+        f"<b>Teklif No:</b> {quote_no}",
+        f"<b>Müşteri:</b> {customer_name}",
+        f"<b>Tarih:</b> {date_text}",
+        f"<b>Proje Kodu:</b> {quotation.get('project_code') or '-'}",
+    ]
+    for line in meta_lines:
+        elements.append(Paragraph(line, styles["Normal"]))
+    elements.append(Spacer(1, 16))
+
+    line_items = quotation.get("line_items", []) or []
+    if line_items:
+        table_data = [
+            ["#", "Kalem", "Adet", "Birim", "Birim Fiyat", "Toplam"]
+        ]
+        totals_by_currency = {}
+        for idx, item in enumerate(line_items, start=1):
+            currency = item.get("currency") or ""
+            quantity = item.get("quantity") or 0
+            unit = item.get("unit") or ""
+            unit_price = item.get("unit_price") or 0
+            line_total = item.get("line_total")
+            if line_total is None:
+                line_total = (quantity or 0) * (unit_price or 0)
+            totals_by_currency[currency] = totals_by_currency.get(currency, 0) + (line_total or 0)
+
+            table_data.append([
+                str(idx),
+                item.get("item_short_name") or "-",
+                f"{quantity}",
+                unit,
+                format_currency(unit_price, currency),
+                format_currency(line_total or 0, currency),
+            ])
+
+        table = Table(table_data, repeatRows=1, hAlign="LEFT")
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#004aad")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 16))
+
+        totals_rows = [["Toplamlar", ""]]
+        for currency, total in totals_by_currency.items():
+            totals_rows.append([currency, format_currency(total, currency)])
+        totals_table = Table(totals_rows, colWidths=[120, 120], hAlign="RIGHT")
+        totals_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#004aad")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ]))
+        elements.append(totals_table)
+    else:
+        elements.append(Paragraph("Kalem bulunamadı.", styles["Normal"]))
+
+    notes = quotation.get("notes")
+    if notes:
+        elements.append(Spacer(1, 16))
+        elements.append(Paragraph("<b>Notlar</b>", styles["Heading3"]))
+        elements.append(Paragraph(notes, styles["BodyText"]))
+
+    doc.build(elements)
 
 # ============================================================================
 # CUSTOMER ENDPOINTS
@@ -1300,37 +1407,37 @@ async def search_quotations(q: str, quotation_type: str = None):
 # ============================================================================
 @api_router.get("/quotations/{quotation_id}/generate-pdf")
 async def generate_quotation_pdf(quotation_id: str):
-    browser = None
     try:
         quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
         if not quotation:
             raise HTTPException(status_code=404, detail="Quotation not found")
 
-        frontend_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://localhost:3000")
-        preview_url = f"{frontend_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
+        frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
+        preview_url = f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
-        browser = await launch(
-            headless=True,
-            executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
-        page = await browser.newPage()
-        await page.setViewport({"width": 1200, "height": 1600})
-        await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
-        await asyncio.sleep(3)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+            page = await browser.newPage()
+            await page.setViewport({"width": 2480, "height": 3508})
+            await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
+            await asyncio.sleep(3)
+            await page.emulateMediaType("print")
 
-        safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
-        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
+            safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+            pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
 
-        await page.pdf({
-            "path": pdf_path,
-            "format": "A4",
-            "printBackground": True,
-            "margin": {"top": "0mm", "right": "0mm", "bottom": "0mm", "left": "0mm"},
-        })
-
-        await browser.close()
-        browser = None
+            await page.pdf({
+                "path": pdf_path,
+                "format": "A4",
+                "printBackground": True,
+                "preferCSSPageSize": True,
+                "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+            })
+            await browser.close()
 
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise Exception("PDF file not created or empty")
@@ -1344,16 +1451,10 @@ async def generate_quotation_pdf(quotation_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
 
 
 async def _generate_pdf_v2_impl(quotation_id: str):
-    browser = None
     try:
         quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
         if not quotation:
@@ -1362,33 +1463,30 @@ async def _generate_pdf_v2_impl(quotation_id: str):
         frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
         preview_url = f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
-        browser = await launch(
-            headless=True,
-            executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
-        page = await browser.newPage()
-        await page.setViewport({"width": 1200, "height": 1600})
-        await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
-        await asyncio.sleep(3)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+            page = await browser.newPage()
+            await page.setViewport({"width": 2480, "height": 3508})
+            await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
+            await asyncio.sleep(3)
 
-        try:
-            await page.emulateMediaType("screen")
-        except Exception:
-            pass
+            await page.emulateMediaType("print")
 
-        safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
-        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
+            safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+            pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
 
-        await page.pdf({
-            "path": pdf_path,
-            "format": "A4",
-            "printBackground": True,
-            "margin": {"top": "0mm", "right": "0mm", "bottom": "0mm", "left": "0mm"},
-        })
-
-        await browser.close()
-        browser = None
+            await page.pdf({
+                "path": pdf_path,
+                "format": "A4",
+                "printBackground": True,
+                "preferCSSPageSize": True,
+                "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+            })
+            await browser.close()
 
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise Exception("PDF file not created or empty")
@@ -1402,17 +1500,38 @@ async def _generate_pdf_v2_impl(quotation_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass
         raise HTTPException(status_code=500, detail=f"PDF generation failed (v2): {e}")
 
 
 @api_router.get("/quotations/{quotation_id}/generate-pdf-v2")
 async def generate_quotation_pdf_v2_endpoint(quotation_id: str):
     return await _generate_pdf_v2_impl(quotation_id)
+
+
+@api_router.get("/quotations/{quotation_id}/generate-pdf-native")
+async def generate_quotation_pdf_native(quotation_id: str):
+    try:
+        quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+        if not quotation:
+            raise HTTPException(status_code=404, detail="Quotation not found")
+
+        safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
+        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_native.pdf"
+
+        build_native_quotation_pdf(quotation, pdf_path)
+
+        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
+            raise Exception("PDF file not created or empty")
+
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"Teklif-{quotation['quote_no']}-{quotation['customer_name']}.pdf",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Native PDF generation failed: {e}")
 
 
 # ============================================================================
