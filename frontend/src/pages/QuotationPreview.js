@@ -72,12 +72,14 @@ const QuotationPreview = () => {
 
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="space-y-2">
-          <h1 className="text-xl font-semibold text-gray-900">{quotation.proje_basligi}</h1>
+          <h1 className="text-xl font-semibold text-gray-900">
+            {quotation.subject || 'Teklif'}
+          </h1>
           <p className="text-sm text-gray-600">
-            {quotation.musteri_firma_adi} • {quotation.teklif_no}
+            {quotation.customer_name || '-'} • {quotation.quote_no || '-'}
           </p>
           <p className="text-sm text-gray-600">
-            {quotation.representative_name} • {quotation.representative_email}
+            {quotation.representative_name || '-'} • {quotation.representative_email || '-'}
           </p>
         </div>
       </div>
