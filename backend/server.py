@@ -1405,31 +1405,28 @@ async def search_quotations(q: str, quotation_type: str = None):
 # ============================================================================
 # PDF ENDPOINTS
 # ============================================================================
-@api_router.get("/quotations/{quotation_id}/generate-pdf")
-async def generate_quotation_pdf(quotation_id: str):
-    try:
-        quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
-        if not quotation:
-            raise HTTPException(status_code=404, detail="Quotation not found")
+def _get_preview_url(quotation: dict, quotation_id: str) -> str:
+    frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
+    return f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
-        frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
-        preview_url = f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
 
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(
-                headless=True,
-                executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            )
+def _safe_quote_no(quotation: dict) -> str:
+    return (quotation.get("quote_no") or "teklif").replace("/", "-").replace(" ", "_")
+
+
+async def _render_pdf_with_playwright(preview_url: str, pdf_path: str) -> None:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        try:
             page = await browser.newPage()
             await page.setViewport({"width": 2480, "height": 3508})
             await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
             await asyncio.sleep(3)
             await page.emulateMediaType("print")
-
-            safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
-            pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
-
             await page.pdf({
                 "path": pdf_path,
                 "format": "A4",
@@ -1437,7 +1434,22 @@ async def generate_quotation_pdf(quotation_id: str):
                 "preferCSSPageSize": True,
                 "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
             })
+        finally:
             await browser.close()
+
+
+@api_router.get("/quotations/{quotation_id}/generate-pdf")
+async def generate_quotation_pdf(quotation_id: str):
+    try:
+        quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+        if not quotation:
+            raise HTTPException(status_code=404, detail="Quotation not found")
+
+        preview_url = _get_preview_url(quotation, quotation_id)
+        safe_quote_no = _safe_quote_no(quotation)
+        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}.pdf"
+
+        await _render_pdf_with_playwright(preview_url, pdf_path)
 
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise Exception("PDF file not created or empty")
@@ -1460,33 +1472,11 @@ async def _generate_pdf_v2_impl(quotation_id: str):
         if not quotation:
             raise HTTPException(status_code=404, detail="Quotation not found")
 
-        frontend_internal_url = os.environ.get("FRONTEND_INTERNAL_URL", "http://demart-frontend:3000")
-        preview_url = f"{frontend_internal_url}/quotations/{quotation['quotation_type']}/preview/{quotation_id}"
+        preview_url = _get_preview_url(quotation, quotation_id)
+        safe_quote_no = _safe_quote_no(quotation)
+        pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
 
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(
-                headless=True,
-                executablePath="/pw-browsers/chromium-1200/chrome-linux/chrome",
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            )
-            page = await browser.newPage()
-            await page.setViewport({"width": 2480, "height": 3508})
-            await page.goto(preview_url, {"waitUntil": "networkidle0", "timeout": 45000})
-            await asyncio.sleep(3)
-
-            await page.emulateMediaType("print")
-
-            safe_quote_no = quotation["quote_no"].replace("/", "-").replace(" ", "_")
-            pdf_path = f"/tmp/teklif_{safe_quote_no}_{quotation_id[:8]}_v2.pdf"
-
-            await page.pdf({
-                "path": pdf_path,
-                "format": "A4",
-                "printBackground": True,
-                "preferCSSPageSize": True,
-                "margin": {"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
-            })
-            await browser.close()
+        await _render_pdf_with_playwright(preview_url, pdf_path)
 
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
             raise Exception("PDF file not created or empty")
