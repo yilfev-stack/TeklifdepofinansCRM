@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,6 +25,7 @@ import {
   CheckCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
+
 import ProposalCover from '@/components/ProposalCover';
 import QuotationFiles from '@/components/QuotationFiles';
 
@@ -38,6 +39,7 @@ const QuotationPreview = () => {
   const [quotation, setQuotation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('preview');
+
   const [costsDialogOpen, setCostsDialogOpen] = useState(false);
   const [internalCosts, setInternalCosts] = useState([]);
   const [costCategories, setCostCategories] = useState([]);
@@ -47,11 +49,13 @@ const QuotationPreview = () => {
     amount: 0,
     currency: 'EUR'
   });
+
   const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
   const [revisions, setRevisions] = useState([]);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
+
   const [uploadingPdf, setUploadingPdf] = useState(false);
-  const fileInputRef = React.useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     fetchQuotation();
@@ -71,49 +75,91 @@ const QuotationPreview = () => {
     }
   };
 
+  const fetchInternalCosts = async () => {
+    try {
+      const response = await axios.get(`${API}/quotations/${id}/internal-costs`);
+      setInternalCosts(response.data || []);
+    } catch (error) {
+      console.error('Error fetching internal costs:', error);
+    }
+  };
+
+  const fetchCostCategories = async () => {
+    try {
+      const response = await axios.get(`${API}/cost-categories`);
+      setCostCategories(response.data || []);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  };
+
+  const handleAddInternalCost = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.post(`${API}/internal-costs`, {
+        quotation_id: id,
+        ...costForm,
+        amount: Number(costForm.amount || 0)
+      });
+      toast.success('Internal cost added');
+      setCostForm({ category_id: '', description: '', amount: 0, currency: 'EUR' });
+      fetchInternalCosts();
+    } catch (error) {
+      console.error('Error adding cost:', error);
+      toast.error('Failed to add cost');
+    }
+  };
+
+  const handleDeleteCost = async (costId) => {
+    try {
+      await axios.delete(`${API}/internal-costs/${costId}`);
+      toast.success('Cost deleted');
+      fetchInternalCosts();
+    } catch (error) {
+      console.error('Error deleting cost:', error);
+      toast.error('Failed to delete cost');
+    }
+  };
+
+  const handleNewRevision = async () => {
+    try {
+      const response = await axios.post(`${API}/quotations/${id}/revise`);
+      toast.success('Yeni revizyon oluşturuldu!');
+      navigate(`/quotations/${type}/edit/${response.data.id}`);
+    } catch (error) {
+      console.error('Revision error:', error);
+      toast.error('Revizyon oluşturulamadı');
+    }
+  };
+
+  const handleViewRevisions = async () => {
+    setLoadingRevisions(true);
+    setRevisionDialogOpen(true);
+    try {
+      const response = await axios.get(`${API}/quotations/${id}/revisions`);
+      setRevisions(response.data || []);
+    } catch (error) {
+      console.error('Error fetching revisions:', error);
+      toast.error('Revizyonlar yüklenemedi');
+      setRevisions([]);
+    } finally {
+      setLoadingRevisions(false);
+    }
+  };
+
   const handleDownloadPDF = async () => {
     const toastId = toast.loading('PDF hazırlanıyor...');
     const primaryUrl = `${API}/quotations/${id}/generate-pdf-v2`;
     const fallbackUrl = `${API}/quotations/${id}/generate-pdf`;
 
     try {
-      const response = await fetch(primaryUrl, { method: 'HEAD' });
-      const targetUrl = response.ok ? primaryUrl : fallbackUrl;
-      window.location.assign(targetUrl);
+      const head = await fetch(primaryUrl, { method: 'HEAD' });
+      window.location.assign(head.ok ? primaryUrl : fallbackUrl);
       toast.success('PDF indiriliyor...', { id: toastId });
     } catch (error) {
       console.error('PDF export error:', error);
       window.location.assign(fallbackUrl);
       toast.success('PDF indiriliyor...', { id: toastId });
-
-    try {
-      let response;
-      try {
-        response = await axios.get(`${API}/quotations/${id}/generate-pdf-v2`, {
-          responseType: 'blob'
-        });
-      } catch (error) {
-        response = await axios.get(`${API}/quotations/${id}/generate-pdf`, {
-          responseType: 'blob'
-        });
-      }
-
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute(
-        'download',
-        `Teklif-${quotation.quote_no}-${quotation.customer_name}.pdf`
-      );
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      toast.success('PDF başarıyla indirildi!', { id: toastId });
-    } catch (error) {
-      console.error('PDF export error:', error);
-      toast.error('PDF indirilemedi', { id: toastId });
     }
   };
 
@@ -139,7 +185,7 @@ const QuotationPreview = () => {
       });
 
       toast.success('Düzenlenmiş PDF başarıyla yüklendi!', { id: toastId });
-      fetchQuotation(); // Refresh to get updated has_edited_pdf status
+      await fetchQuotation();
     } catch (error) {
       console.error('PDF upload error:', error);
       toast.error(error.response?.data?.detail || 'PDF yüklenemedi', { id: toastId });
@@ -159,7 +205,7 @@ const QuotationPreview = () => {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Teklif-${quotation.quote_no}-DUZENLENMIS.pdf`);
+      link.setAttribute('download', `Teklif-${quotation?.quote_no || id}-DUZENLENMIS.pdf`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -172,52 +218,8 @@ const QuotationPreview = () => {
     }
   };
 
-  const fetchInternalCosts = async () => {
-    try {
-      const response = await axios.get(`${API}/quotations/${id}/internal-costs`);
-      setInternalCosts(response.data);
-    } catch (error) {
-      console.error('Error fetching internal costs:', error);
-    }
-  };
-
-  const fetchCostCategories = async () => {
-    try {
-      const response = await axios.get(`${API}/cost-categories`);
-      setCostCategories(response.data);
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-    }
-  };
-
-  const handleAddInternalCost = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post(`${API}/internal-costs`, {
-        quotation_id: id,
-        ...costForm
-      });
-      toast.success('Internal cost added');
-      setCostForm({ category_id: '', description: '', amount: 0, currency: 'EUR' });
-      fetchInternalCosts();
-    } catch (error) {
-      console.error('Error adding cost:', error);
-      toast.error('Failed to add cost');
-    }
-  };
-
-  const handleDeleteCost = async (costId) => {
-    try {
-      await axios.delete(`${API}/internal-costs/${costId}`);
-      toast.success('Cost deleted');
-      fetchInternalCosts();
-    } catch (error) {
-      console.error('Error deleting cost:', error);
-      toast.error('Failed to delete cost');
-    }
-  };
-
   const formatDate = (dateString) => {
+    if (!dateString) return '-';
     return new Date(dateString).toLocaleDateString('tr-TR', {
       day: '2-digit',
       month: 'long',
@@ -226,13 +228,13 @@ const QuotationPreview = () => {
   };
 
   const formatCurrency = (amount, currency) => {
-    return `${amount.toFixed(2)} ${currency}`;
+    return `${Number(amount || 0).toFixed(2)} ${currency}`;
   };
 
   const calculateInternalCostsTotals = () => {
     const totals = {};
     internalCosts.forEach((cost) => {
-      totals[cost.currency] = (totals[cost.currency] || 0) + cost.amount;
+      totals[cost.currency] = (totals[cost.currency] || 0) + Number(cost.amount || 0);
     });
     return totals;
   };
@@ -244,38 +246,12 @@ const QuotationPreview = () => {
 
     const profits = {};
     Object.keys(customerTotals).forEach((currency) => {
-      const revenue = customerTotals[currency] || 0;
-      const cost = costTotals[currency] || 0;
+      const revenue = Number(customerTotals[currency] || 0);
+      const cost = Number(costTotals[currency] || 0);
       profits[currency] = revenue - cost;
     });
 
     return profits;
-  };
-
-  const handleNewRevision = async () => {
-    try {
-      const response = await axios.post(`${API}/quotations/${id}/revise`);
-      toast.success('Yeni revizyon oluşturuldu!');
-      navigate(`/quotations/${type}/edit/${response.data.id}`);
-    } catch (error) {
-      console.error('Revision error:', error);
-      toast.error('Revizyon oluşturulamadı');
-    }
-  };
-
-  const handleViewRevisions = async () => {
-    setLoadingRevisions(true);
-    setRevisionDialogOpen(true);
-    try {
-      const response = await axios.get(`${API}/quotations/${id}/revisions`);
-      setRevisions(response.data);
-    } catch (error) {
-      console.error('Error fetching revisions:', error);
-      toast.error('Revizyonlar yüklenemedi');
-      setRevisions([]);
-    } finally {
-      setLoadingRevisions(false);
-    }
   };
 
   if (loading || !quotation) {
@@ -312,6 +288,7 @@ const QuotationPreview = () => {
                 <p className="text-xs text-muted-foreground">{quotation.quote_no}</p>
               </div>
             </div>
+
             <div className="flex gap-2">
               <Button
                 variant={activeTab === 'preview' ? 'default' : 'outline'}
@@ -319,6 +296,7 @@ const QuotationPreview = () => {
               >
                 Önizleme
               </Button>
+
               <Button
                 variant={activeTab === 'files' ? 'default' : 'outline'}
                 onClick={() => setActiveTab('files')}
@@ -326,6 +304,7 @@ const QuotationPreview = () => {
                 <FileText className="h-4 w-4 mr-2" />
                 Dosyalar
               </Button>
+
               <Button
                 variant="outline"
                 onClick={handleNewRevision}
@@ -334,6 +313,7 @@ const QuotationPreview = () => {
                 <GitBranch className="h-4 w-4 mr-2" />
                 Yeni Revizyon
               </Button>
+
               <Button
                 variant="outline"
                 onClick={handleViewRevisions}
@@ -360,6 +340,7 @@ const QuotationPreview = () => {
                     Internal Costs (SECRET)
                   </Button>
                 </DialogTrigger>
+
                 <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle className="text-red-400">
@@ -396,9 +377,7 @@ const QuotationPreview = () => {
                         <Button
                           size="sm"
                           onClick={async () => {
-                            const nameInput = document.getElementById(
-                              'new-category-name'
-                            );
+                            const nameInput = document.getElementById('new-category-name');
                             if (!nameInput || !nameInput.value) {
                               toast.error('Enter category name');
                               return;
@@ -411,7 +390,7 @@ const QuotationPreview = () => {
                               toast.success('Category added');
                               nameInput.value = '';
                               fetchCostCategories();
-                            } catch (error) {
+                            } catch {
                               toast.error('Failed to add category');
                             }
                           }}
@@ -568,10 +547,14 @@ const QuotationPreview = () => {
                 </DialogContent>
               </Dialog>
 
-              <Button variant="outline" onClick={() => navigate(`/quotations/${type}/edit/${id}`)}>
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/quotations/${type}/edit/${id}`)}
+              >
                 <Edit className="h-4 w-4 mr-2" />
                 Edit
               </Button>
+
               <Button onClick={handleDownloadPDF}>
                 <Download className="h-4 w-4 mr-2" />
                 Download PDF
@@ -586,8 +569,8 @@ const QuotationPreview = () => {
                   onChange={handleUploadEditedPdf}
                   className="hidden"
                 />
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploadingPdf}
                   className="border-orange-500 text-orange-600 hover:bg-orange-50"
@@ -597,10 +580,7 @@ const QuotationPreview = () => {
                 </Button>
 
                 {quotation?.has_edited_pdf && (
-                  <Button 
-                    onClick={handleDownloadEditedPdf}
-                    className="bg-green-600 hover:bg-green-700"
-                  >
+                  <Button onClick={handleDownloadEditedPdf} className="bg-green-600 hover:bg-green-700">
                     <CheckCircle className="h-4 w-4 mr-2" />
                     Düzenlenmiş PDF İndir
                   </Button>
@@ -620,9 +600,7 @@ const QuotationPreview = () => {
           {loadingRevisions ? (
             <div className="text-center py-8">Yükleniyor...</div>
           ) : revisions.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Henüz revizyon yok
-            </div>
+            <div className="text-center py-8 text-muted-foreground">Henüz revizyon yok</div>
           ) : (
             <div className="space-y-2">
               {revisions.map((rev) => (
@@ -968,7 +946,11 @@ const QuotationPreview = () => {
                           >
                             <span className="text-sm">
                               {item.item_short_name}
-                              {item.variant_sku && <span className="text-xs text-gray-500 ml-2">(SKU: {item.variant_sku})</span>}
+                              {item.variant_sku && (
+                                <span className="text-xs text-gray-500 ml-2">
+                                  (SKU: {item.variant_sku})
+                                </span>
+                              )}
                             </span>
                             <span className="text-sm font-semibold">
                               {formatCurrency(item.line_total, item.currency)}
@@ -984,9 +966,7 @@ const QuotationPreview = () => {
                   {Object.keys(quotation.totals_by_currency?.totals || {}).map(
                     (currency) => {
                       const subtotal = quotation.line_items
-                        .filter(
-                          (item) => !item.is_optional && item.currency === currency
-                        )
+                        .filter((item) => !item.is_optional && item.currency === currency)
                         .reduce((sum, item) => sum + item.line_total, 0);
 
                       let discountAmount = 0;
@@ -1008,59 +988,31 @@ const QuotationPreview = () => {
                       return (
                         <div key={currency}>
                           <div className="flex justify-between items-center py-1">
-                            <span
-                              className="font-semibold text-gray-700"
-                              style={{ fontSize: '14px' }}
-                            >
-                              {quotation.language === 'english'
-                                ? 'SUBTOTAL'
-                                : 'ARA TOPLAM'}{' '}
-                              ({currency}):
+                            <span className="font-semibold text-gray-700" style={{ fontSize: '14px' }}>
+                              {quotation.language === 'english' ? 'SUBTOTAL' : 'ARA TOPLAM'} ({currency}):
                             </span>
-                            <span
-                              className="font-bold text-gray-900"
-                              style={{ fontSize: '14px' }}
-                            >
+                            <span className="font-bold text-gray-900" style={{ fontSize: '14px' }}>
                               {formatCurrency(subtotal, currency)}
                             </span>
                           </div>
 
                           {discountAmount > 0 && (
                             <div className="flex justify-between items-center py-1">
-                              <span
-                                className="font-semibold text-gray-700"
-                                style={{ fontSize: '14px' }}
-                              >
-                                {quotation.language === 'english'
-                                  ? 'DISCOUNT'
-                                  : 'İNDİRİM'}
-                                {quotation.discount_type === 'percent' &&
-                                  ` (%${quotation.discount_value})`}
-                                :
+                              <span className="font-semibold text-gray-700" style={{ fontSize: '14px' }}>
+                                {quotation.language === 'english' ? 'DISCOUNT' : 'İNDİRİM'}
+                                {quotation.discount_type === 'percent' && ` (%${quotation.discount_value})`}:
                               </span>
-                              <span
-                                className="font-bold text-red-600"
-                                style={{ fontSize: '14px' }}
-                              >
+                              <span className="font-bold text-red-600" style={{ fontSize: '14px' }}>
                                 -{formatCurrency(discountAmount, currency)}
                               </span>
                             </div>
                           )}
 
                           <div className="flex justify-between items-center py-2 border-t-2 border-gray-400 mt-2">
-                            <span
-                              className="font-bold text-gray-900"
-                              style={{ fontSize: '16px' }}
-                            >
-                              {quotation.language === 'english'
-                                ? 'GRAND TOTAL'
-                                : 'GENEL TOPLAM'}{' '}
-                              ({currency}):
+                            <span className="font-bold text-gray-900" style={{ fontSize: '16px' }}>
+                              {quotation.language === 'english' ? 'GRAND TOTAL' : 'GENEL TOPLAM'} ({currency}):
                             </span>
-                            <span
-                              className="font-bold"
-                              style={{ color: '#004aad', fontSize: '18px' }}
-                            >
+                            <span className="font-bold" style={{ color: '#004aad', fontSize: '18px' }}>
                               {formatCurrency(finalTotal, currency)}
                             </span>
                           </div>
@@ -1071,28 +1023,23 @@ const QuotationPreview = () => {
                 </div>
 
                 {/* Notes / disclaimer */}
-                <div
-                  className="space-y-3 text-xs text-gray-600 border-t border-gray-200 pt-4"
-                  style={{ pageBreakInside: 'avoid' }}
-                >
+                <div className="space-y-3 text-xs text-gray-600 border-t border-gray-200 pt-4" style={{ pageBreakInside: 'avoid' }}>
                   <p className="italic">
                     {quotation.language === 'english'
                       ? 'All prices mentioned in this quotation are exclusive of VAT and other legal taxes.'
                       : 'Bu teklifte belirtilen tüm fiyatlar KDV ve diğer yasal vergiler hariçtir.'}
                   </p>
+
                   <p>
                     <span className="font-semibold">
                       {quotation.language === 'english' ? 'Validity:' : 'Geçerlilik:'}
                     </span>{' '}
-                    {quotation.validity_days}{' '}
-                    {quotation.language === 'english' ? 'days' : 'gün'}
+                    {quotation.validity_days} {quotation.language === 'english' ? 'days' : 'gün'}
                   </p>
 
                   <div className="bg-red-50 border border-red-200 p-4 rounded">
                     <h4 className="font-bold text-red-800 mb-2 text-sm">
-                      {quotation.language === 'english'
-                        ? 'CONFIDENTIALITY WARNING'
-                        : 'GİZLİLİK UYARISI'}
+                      {quotation.language === 'english' ? 'CONFIDENTIALITY WARNING' : 'GİZLİLİK UYARISI'}
                     </h4>
                     <p className="text-xs text-gray-700 leading-relaxed">
                       {quotation.language === 'english'
@@ -1127,10 +1074,7 @@ const QuotationPreview = () => {
                       alt="DEMART Logo"
                       className="h-18 w-auto mb-1 ml-auto"
                     />
-                    <div
-                      className="text-[10px] font-medium uppercase tracking-wide"
-                      style={{ color: '#004aad' }}
-                    >
+                    <div className="text-[10px] font-medium uppercase tracking-wide" style={{ color: '#004aad' }}>
                       The Art of Design Engineering Maintenance
                     </div>
                   </div>
@@ -1140,17 +1084,9 @@ const QuotationPreview = () => {
               <div className="space-y-4 text-sm">
                 {quotation.delivery_time && (
                   <div>
-                    <div
-                      style={{
-                        borderLeft: '5px solid #dc2626',
-                        paddingLeft: '12px',
-                        marginBottom: '8px'
-                      }}
-                    >
+                    <div style={{ borderLeft: '5px solid #dc2626', paddingLeft: '12px', marginBottom: '8px' }}>
                       <h4 className="font-semibold" style={{ color: '#991b1b' }}>
-                        {quotation.language === 'english'
-                          ? 'Delivery Time:'
-                          : 'Teslimat Süresi:'}
+                        {quotation.language === 'english' ? 'Delivery Time:' : 'Teslimat Süresi:'}
                       </h4>
                     </div>
                     <p className="text-gray-700">{quotation.delivery_time}</p>
@@ -1159,17 +1095,9 @@ const QuotationPreview = () => {
 
                 {quotation.delivery_terms && (
                   <div>
-                    <div
-                      style={{
-                        borderLeft: '5px solid #dc2626',
-                        paddingLeft: '12px',
-                        marginBottom: '8px'
-                      }}
-                    >
+                    <div style={{ borderLeft: '5px solid #dc2626', paddingLeft: '12px', marginBottom: '8px' }}>
                       <h4 className="font-semibold" style={{ color: '#991b1b' }}>
-                        {quotation.language === 'english'
-                          ? 'Delivery Terms:'
-                          : 'Teslimat Koşulları:'}
+                        {quotation.language === 'english' ? 'Delivery Terms:' : 'Teslimat Koşulları:'}
                       </h4>
                     </div>
                     <p className="text-gray-700">{quotation.delivery_terms}</p>
@@ -1178,17 +1106,9 @@ const QuotationPreview = () => {
 
                 {quotation.payment_terms && (
                   <div>
-                    <div
-                      style={{
-                        borderLeft: '5px solid #dc2626',
-                        paddingLeft: '12px',
-                        marginBottom: '8px'
-                      }}
-                    >
+                    <div style={{ borderLeft: '5px solid #dc2626', paddingLeft: '12px', marginBottom: '8px' }}>
                       <h4 className="font-semibold" style={{ color: '#991b1b' }}>
-                        {quotation.language === 'english'
-                          ? 'Payment Terms:'
-                          : 'Ödeme Koşulları:'}
+                        {quotation.language === 'english' ? 'Payment Terms:' : 'Ödeme Koşulları:'}
                       </h4>
                     </div>
                     <p className="text-gray-700">{quotation.payment_terms}</p>
@@ -1197,13 +1117,7 @@ const QuotationPreview = () => {
 
                 {quotation.notes && (
                   <div>
-                    <div
-                      style={{
-                        borderLeft: '5px solid #dc2626',
-                        paddingLeft: '12px',
-                        marginBottom: '8px'
-                      }}
-                    >
+                    <div style={{ borderLeft: '5px solid #dc2626', paddingLeft: '12px', marginBottom: '8px' }}>
                       <h4 className="font-semibold" style={{ color: '#991b1b' }}>
                         {quotation.language === 'english' ? 'Notes:' : 'Notlar:'}
                       </h4>
@@ -1214,10 +1128,7 @@ const QuotationPreview = () => {
               </div>
 
               <div className="border-t border-gray-300 pt-4 mt-8 text-center">
-                <p
-                  className="text-xs font-medium uppercase tracking-wide"
-                  style={{ color: '#004aad' }}
-                >
+                <p className="text-xs font-medium uppercase tracking-wide" style={{ color: '#004aad' }}>
                   THE ART OF DESIGN ENGINEERING MAINTENANCE
                 </p>
               </div>
@@ -1233,4 +1144,4 @@ const QuotationPreview = () => {
   );
 };
 
-export default QuotationPreview;
+export default QuotationPrevi
